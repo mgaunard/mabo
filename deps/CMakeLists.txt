@@ -17,4 +17,4 @@ string(REGEX REPLACE "^;" "" INCLUDE_DIRS "${INCLUDE_DIRS}")
 target_include_directories(deps INTERFACE ${INCLUDE_DIRS})
 
 #file(GLOB_RECURSE LIBS /home/mgaunard/dev/radare2/*.a)
-target_link_libraries(deps INTERFACE -L$ENV{PKG_CONFIG_SYSROOT_DIR}/usr/lib ${LIBS} -lr_crypto -lutil -ldl -pthread)
+#target_link_libraries(deps INTERFACE -L$ENV{PKG_CONFIG_SYSROOT_DIR}/usr/lib ${LIBS} -lr_crypto -lutil -ldl -pthread)
