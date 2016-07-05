@@ -1,0 +1,149 @@
+diff --git a/googlemock/include/gmock/gmock-matchers.h b/googlemock/include/gmock/gmock-matchers.h
+index 33b37a7..e4c6b49 100644
+--- a/googlemock/include/gmock/gmock-matchers.h
++++ b/googlemock/include/gmock/gmock-matchers.h
+@@ -2548,18 +2548,20 @@ class ContainerEqMatcher {
+                        MatchResultListener* listener) const {
+     // GTEST_REMOVE_CONST_() is needed to work around an MSVC 8.0 bug
+     // that causes LhsContainer to be a const type sometimes.
+-    typedef internal::StlContainerView<GTEST_REMOVE_CONST_(LhsContainer)>
+-        LhsView;
+-    typedef typename LhsView::type LhsStlContainer;
+-    StlContainerReference lhs_stl_container = LhsView::ConstReference(lhs);
+-    if (lhs_stl_container == expected_)
++    auto&& lhs_stl_container = lhs;
++    auto lhs_it = lhs_stl_container.begin();
++    auto rhs_it = expected_.begin();
++    for (; lhs_it != lhs_stl_container.end() && rhs_it != expected_.end(); ++lhs_it, ++rhs_it)
++      if(*lhs_it != *rhs_it)
++        break;
++    if (lhs_it == lhs_stl_container.end() && rhs_it == expected_.end())
+       return true;
+ 
+     ::std::ostream* const os = listener->stream();
+     if (os != NULL) {
+       // Something is different. Check for extra values first.
+       bool printed_header = false;
+-      for (typename LhsStlContainer::const_iterator it =
++      for (auto it =
+                lhs_stl_container.begin();
+            it != lhs_stl_container.end(); ++it) {
+         if (internal::ArrayAwareFind(expected_.begin(), expected_.end(), *it) ==
+@@ -2576,7 +2578,7 @@ class ContainerEqMatcher {
+ 
+       // Now check for missing values.
+       bool printed_header2 = false;
+-      for (typename StlContainer::const_iterator it = expected_.begin();
++      for (auto it = expected_.begin();
+            it != expected_.end(); ++it) {
+         if (internal::ArrayAwareFind(
+                 lhs_stl_container.begin(), lhs_stl_container.end(), *it) ==
+@@ -2799,11 +2801,7 @@ class PointwiseMatcher {
+ template <typename Container>
+ class QuantifierMatcherImpl : public MatcherInterface<Container> {
+  public:
+-  typedef GTEST_REMOVE_REFERENCE_AND_CONST_(Container) RawContainer;
+-  typedef StlContainerView<RawContainer> View;
+-  typedef typename View::type StlContainer;
+-  typedef typename View::const_reference StlContainerReference;
+-  typedef typename StlContainer::value_type Element;
++  using Element = std::decay_t<decltype(*std::declval<Container>().begin())>;
+ 
+   template <typename InnerMatcher>
+   explicit QuantifierMatcherImpl(InnerMatcher inner_matcher)
+@@ -2816,9 +2814,9 @@ class QuantifierMatcherImpl : public MatcherInterface<Container> {
+   bool MatchAndExplainImpl(bool all_elements_should_match,
+                            Container container,
+                            MatchResultListener* listener) const {
+-    StlContainerReference stl_container = View::ConstReference(container);
++    auto&& stl_container = container;
+     size_t i = 0;
+-    for (typename StlContainer::const_iterator it = stl_container.begin();
++    for (auto it = stl_container.begin();
+          it != stl_container.end(); ++it, ++i) {
+       StringMatchResultListener inner_listener;
+       const bool matches = inner_matcher_.MatchAndExplain(*it, &inner_listener);
+@@ -3107,11 +3105,7 @@ class PairMatcher {
+ template <typename Container>
+ class ElementsAreMatcherImpl : public MatcherInterface<Container> {
+  public:
+-  typedef GTEST_REMOVE_REFERENCE_AND_CONST_(Container) RawContainer;
+-  typedef internal::StlContainerView<RawContainer> View;
+-  typedef typename View::type StlContainer;
+-  typedef typename View::const_reference StlContainerReference;
+-  typedef typename StlContainer::value_type Element;
++  using Element = std::decay_t<decltype(*std::declval<Container>().begin())>;
+ 
+   // Constructs the matcher from a sequence of element values or
+   // element matchers.
+@@ -3167,8 +3161,8 @@ class ElementsAreMatcherImpl : public MatcherInterface<Container> {
+ 
+     // explanations[i] is the explanation of the element at index i.
+     ::std::vector<internal::string> explanations(count());
+-    StlContainerReference stl_container = View::ConstReference(container);
+-    typename StlContainer::const_iterator it = stl_container.begin();
++    auto&& stl_container = container;
++    auto it = stl_container.begin();
+     size_t exam_pos = 0;
+     bool mismatch_found = false;  // Have we found a mismatched element yet?
+ 
+@@ -3480,9 +3474,7 @@ class ElementsAreMatcher {
+ 
+   template <typename Container>
+   operator Matcher<Container>() const {
+-    typedef GTEST_REMOVE_REFERENCE_AND_CONST_(Container) RawContainer;
+-    typedef typename internal::StlContainerView<RawContainer>::type View;
+-    typedef typename View::value_type Element;
++    using Element = std::decay_t<decltype(*std::declval<Container>().begin())>;
+     typedef ::std::vector<Matcher<const Element&> > MatcherVec;
+     MatcherVec matchers;
+     matchers.reserve(::testing::tuple_size<MatcherTuple>::value);
+diff --git a/googletest/include/gtest/gtest-printers.h b/googletest/include/gtest/gtest-printers.h
+index 8a33164..7ac1d4e 100644
+--- a/googletest/include/gtest/gtest-printers.h
++++ b/googletest/include/gtest/gtest-printers.h
+@@ -373,7 +373,7 @@ void DefaultPrintTo(IsContainer /* dummy */,
+   const size_t kMaxCount = 32;  // The maximum number of elements to print.
+   *os << '{';
+   size_t count = 0;
+-  for (typename C::const_iterator it = container.begin();
++  for (auto it = container.begin();
+        it != container.end(); ++it, ++count) {
+     if (count > 0) {
+       *os << ',';
+diff --git a/googletest/include/gtest/internal/gtest-internal.h b/googletest/include/gtest/internal/gtest-internal.h
+index ebd1cf6..2b18e12 100644
+--- a/googletest/include/gtest/internal/gtest-internal.h
++++ b/googletest/include/gtest/internal/gtest-internal.h
+@@ -928,10 +928,8 @@ struct IsAProtocolMessage
+ // IsContainerTest(typename C::const_iterator*) and
+ // IsContainerTest(...) doesn't work with Visual Age C++ and Sun C++.
+ typedef int IsContainer;
+-template <class C>
+-IsContainer IsContainerTest(int /* dummy */,
+-                            typename C::iterator* /* it */ = NULL,
+-                            typename C::const_iterator* /* const_it */ = NULL) {
++template <class C, class B = decltype(std::declval<C>().begin()), class E = decltype(std::declval<C>().end())>
++IsContainer IsContainerTest(int /* dummy */) {
+   return 0;
+ }
+ 
+@@ -979,13 +977,14 @@ bool ArrayEq(const T* lhs, size_t size, const U* rhs) {
+ 
+ // Finds the first element in the iterator range [begin, end) that
+ // equals elem.  Element may be a native array type itself.
+-template <typename Iter, typename Element>
+-Iter ArrayAwareFind(Iter begin, Iter end, const Element& elem) {
+-  for (Iter it = begin; it != end; ++it) {
++template <typename Iter, typename IterEnd, typename Element>
++Iter ArrayAwareFind(Iter begin, IterEnd end, const Element& elem) {
++  Iter it = begin;
++  for (; it != end; ++it) {
+     if (internal::ArrayEq(*it, elem))
+       return it;
+   }
+-  return end;
++  return it;
+ }
+ 
+ // CopyArray() copies a k-dimensional native array using the elements'

@@ -1,22 +1,20 @@
-#ifndef MABO_BFD_HPP_INCLUDED
-#define MABO_BFD_HPP_INCLUDED
+#ifndef MABO_BINARY_BFD_HPP_INCLUDED
+#define MABO_BINARY_BFD_HPP_INCLUDED
 
 #include <mabo/config.hpp>
 #include <mabo/utility.hpp>
+
 #include <bfd.h>
 #include <elf.h>
-#include <unordered_map>
+
 #include <range/v3/view.hpp>
 #include <range/v3/algorithm.hpp>
 
-template<class T>
-struct print
-{
-    unsigned : 80;
-    typedef T type;
-};
+#include <type_traits>
+#include <cassert>
+#include <stdexcept>
 
-namespace mabo
+namespace mabo { namespace bfd
 {
 
 struct bfd_initer
@@ -36,30 +34,111 @@ struct bfd_initer_once
     }
 };
 
-struct bfd_deleter
+// intrusive shared_ptr with member-backed aliasing
+template<class T, ::bfd* (T::*member) = (::bfd* (T::*))0>
+struct bfd_handle
 {
-    void operator()(bfd* abfd) const
-    {
-        if(abfd)
-            bfd_close(abfd);
-    }
-};
+    bfd_handle() : value(0) {}
 
-struct empty_deleter
-{
-    template<class T>
-    void operator()(T* ptr) const
+    explicit bfd_handle(T* ptr) : value(ptr)
     {
+        ::bfd* p = bfd();
+        if(p)
+            p->usrdata = (void*)((uintptr_t)p->usrdata + 1);
     }
+
+    bfd_handle(bfd_handle&& other) : value(other.value)
+    {
+        other.value = 0;
+    }
+
+    bfd_handle& operator=(bfd_handle&& other)
+    {
+        value = other.value;
+        other.value = 0;
+        return *this;
+    }
+
+    bfd_handle(bfd_handle const& other) : value(other.value)
+    {
+        ::bfd* p = bfd();
+        if(p)
+            p->usrdata = (void*)((uintptr_t)p->usrdata + 1);
+    }
+
+    bfd_handle& operator=(bfd_handle const& other)
+    {
+        reset(other.value);
+        return *this;
+    }
+
+    T* get() const
+    {
+        return value;
+    }
+
+    T* operator->() const
+    {
+        return value;
+    }
+
+    long use_count() const
+    {
+        ::bfd* p = bfd();
+        return p ? (uintptr_t)p->usrdata : 0;
+    }
+
+    void reset(T* ptr = 0)
+    {
+        ::bfd* old_p = bfd();
+        value = ptr;
+        ::bfd* p = bfd();
+        if(p)
+            p->usrdata = (void*)((uintptr_t)p->usrdata + 1);
+        if(old_p)
+            if(!(old_p->usrdata = (void*)((uintptr_t)old_p->usrdata - 1)))
+                bfd_close(old_p);
+    }
+
+    ~bfd_handle()
+    {
+        ::bfd* p = bfd();
+        if(p)
+            if(!(p->usrdata = (void*)((uintptr_t)p->usrdata - 1)))
+                bfd_close(p);
+    }
+
+    typedef T* (bfd_handle::*safe_bool_type)() const;
+    operator safe_bool_type() const
+    {
+        return value ? &bfd_handle::get : 0;
+    }
+
+    ::bfd* bfd()
+    {
+        if(value)
+                if(!member)
+                    return (::bfd*)value;
+                else
+                    return value->*member;
+        else
+            return 0;
+    }
+
+private:
+    T* value;
 };
 
 struct object;
 
 struct symbol
 {
-    symbol(asymbol* sym) : sym(sym) {}
+    explicit symbol(::asymbol* sym) : sym(sym)
+    {
+        assert(sym);
+    }
 
-    mabo::object object() const;
+    bfd::object object() const;
 
     string_view name() const
     {
@@ -67,12 +146,15 @@ struct symbol
     }
 
 private:
-    asymbol* sym;
+    bfd_handle<::asymbol, &asymbol::the_bfd> sym;
 };
 
 struct section
 {
-    section(asection* sec) : sec(sec) {}
+    explicit section(::asection* sec) : sec(sec)
+    {
+        assert(sec);
+    }
 
     string_view name() const
     {
@@ -80,8 +162,10 @@ struct section
     }
 
     template<class T>
-    auto data()
+    auto data() const
     {
+        static_assert(std::is_trivially_copyable<T>::value, "sections can only be reinterpreted as trivial types");
+
         #define BUFFER_SIZE size_t(32)
         struct section_data_range : ranges::view_facade<section_data_range>
         {
@@ -157,19 +241,21 @@ struct section
         };
         #undef BUFFER_SIZE
 
-        return section_data_range(sec);
+        return section_data_range(sec.get());
     }
 
 private:
-    asection* sec;
+    bfd_handle<::asection, &asection::owner> sec;
 };
 
 struct archive;
 
 struct object
 {
-    object(bfd* abfd) : abfd(abfd)
+    explicit object(::bfd* abfd) : abfd(abfd)
     {
+        assert(abfd);
+
         // partitioning criteria
         auto is_import = [](asymbol* sym)
         {
@@ -177,7 +263,7 @@ struct object
         };
         auto is_global = [](asymbol* sym)
         {
-            return !(sym->flags & BSF_LOCAL);
+            return sym->flags & BSF_GLOBAL;
         };
 
         // load normal symbols
@@ -218,15 +304,14 @@ struct object
 
         dyn_symbols_part1 = ranges::partition(dyn_symbols_, is_import) - dyn_symbols_.begin();
         dyn_symbols_part2 = ranges::partition(ranges::make_iterator_range(dyn_symbols_.begin() + dyn_symbols_part1, dyn_symbols_.end()), is_global).get_unsafe() - dyn_symbols_.begin();
-
     }
 
-    string_view name()
+    string_view name() const
     {
         return abfd->filename;
     }
 
-    auto sections()
+    auto sections() const
     {
         struct section_range : ranges::view_facade<section_range>
         {
@@ -238,9 +323,9 @@ struct object
         private:
             friend ranges::range_access;
 
-            mabo::section get() const
+            bfd::section get() const
             {
-                return mabo::section(sec);
+                return bfd::section(sec);
             }
 
             bool done() const
@@ -259,14 +344,18 @@ struct object
         return ranges::view::bounded(section_range(abfd->sections));
     }
 
-    mabo::section section(string_view name)
+    optional<bfd::section> section(string_view name) const
     {
-        return mabo::section(bfd_get_section_by_name(abfd, name.to_string().c_str()));
+        asection* sec = bfd_get_section_by_name(abfd.get(), name.to_string().c_str());
+        if(sec)
+            return bfd::section(sec);
+        else
+            return {};
     }
 
-    optional<mabo::archive> archive() const;
+    optional<bfd::archive> archive() const;
 
-    auto symbols()
+    auto symbols() const
     {
         return ranges::view::concat(
             ranges::make_iterator_range(symbols_.begin() + symbols_part1, symbols_.begin() + symbols_part2) | ranges::view::transform([](asymbol* sym) { return symbol(sym); }),
@@ -274,7 +363,7 @@ struct object
         );
     }
 
-    auto imports()
+    auto imports() const
     {
         return ranges::view::concat(
             ranges::make_iterator_range(symbols_.begin(), symbols_.begin() + symbols_part1) | ranges::view::transform([](asymbol* sym) { return symbol(sym); }),
@@ -282,18 +371,23 @@ struct object
         );
     }
 
-    auto libs()
+    auto libs() const
     {
+        // only ELF and Mach-O support this
+        // we only care about ELF for now
         vector<string> libs;
 
         auto traverse = [&](auto t)
         {
+            if(!section(".dynamic") || !section(".dynstr"))
+                return;
+
             typedef decltype(t) T;
-            for(T entry : section(".dynamic").data<T>())
+            for(T entry : section(".dynamic")->data<T>())
             {
                 if(entry.d_tag == DT_NEEDED)
                 {
-                    auto it = section(".dynstr").data<char>().begin() + entry.d_un.d_val;
+                    auto it = section(".dynstr")->data<char>().begin() + entry.d_un.d_val;
                     string s;
                     for(; *it; ++it)
                         s += *it;
@@ -302,7 +396,7 @@ struct object
             }
         };
 
-        if(true)//abfd->arch_info.bits_per_byte == 64)
+        if(abfd->arch_info->bits_per_word == 64)
             traverse(Elf64_Dyn());
         else
             traverse(Elf32_Dyn());
@@ -312,11 +406,11 @@ struct object
     }
 
 private:
-    bfd* abfd;
-    vector<asymbol*> symbols_;
+    bfd_handle<::bfd> abfd;
+    vector<::asymbol*> symbols_;
     size_t symbols_part1;
     size_t symbols_part2;
-    vector<asymbol*> dyn_symbols_;
+    vector<::asymbol*> dyn_symbols_;
     size_t dyn_symbols_part1;
     size_t dyn_symbols_part2;
 };
@@ -324,19 +418,22 @@ private:
 // collection of objects, but only load as needed
 struct archive
 {
-    archive(bfd* abfd) : abfd(abfd) {}
+    explicit archive(::bfd* abfd) : abfd(abfd)
+    {
+        assert(abfd);
+    }
 
-    string_view name()
+    string_view name() const
     {
         return abfd->filename;
     }
 
-    auto objects()
+    auto objects() const
     {
         struct object_range : ranges::view_facade<object_range>
         {
             object_range() = default;
-            object_range(bfd* abfd) : abfd(abfd), archived(0)
+            object_range(::bfd* abfd) : abfd(abfd), archived(0)
             {
                 next();
             }
@@ -346,7 +443,7 @@ struct archive
 
             object get() const
             {
-                return mabo::object(archived);
+                return bfd::object(archived.get());
             }
 
             bool done() const
@@ -358,74 +455,121 @@ struct archive
             {
                 do
                 {
-                    archived = bfd_openr_next_archived_file(abfd, archived);
+                    archived.reset(bfd_openr_next_archived_file(abfd, archived.get()));
                 }
-                while(archived && !bfd_check_format(archived, bfd_object));
+                while(archived && !bfd_check_format(archived.get(), bfd_object));
             }
 
-            bfd* abfd;
-            bfd* archived;
+            ::bfd* abfd;
+            bfd_handle<::bfd> archived;
         };
 
-        return ranges::view::bounded(object_range(abfd));
+        return ranges::view::bounded(object_range(abfd.get()));
     }
 
 private:
-    bfd* abfd;
+    bfd_handle<::bfd> abfd;
 };
 
-inline mabo::object symbol::object() const
+inline bfd::object symbol::object() const
 {
-    return mabo::object(bfd_asymbol_bfd(sym));
+    return bfd::object(bfd_asymbol_bfd(sym));
 }
 
-inline optional<mabo::archive> object::archive() const
+inline optional<bfd::archive> object::archive() const
 {
     if(abfd->my_archive)
-        return mabo::archive(abfd->my_archive);
+        return bfd::archive(abfd->my_archive);
     else
         return {};
 }
 
-using binary = variant<object, archive>;
-
-struct context
+struct binary : variant<object, archive>
 {
-    context()
+    typedef variant<object, archive> variant_type;
+
+    binary(string_view file) : variant_type(load_file(file))
     {
-        static bfd_initer init;
     }
 
-    void load_file(string_view str)
+    string_view name() const
     {
-        bfd* abfd = bfd_openr(str.to_string().c_str(), NULL);
-        if(!abfd)
-            throw std::runtime_error("failed to load binary " + str.to_string());
-
-        binaries.push_back(load_file(abfd));
+        return mabo::visit(
+            [&](auto&& o) { return o.name(); },
+            *this
+        );
     }
 
-    auto objects()
+    auto objects() const
     {
-        vector<mabo::object> objects;
-
-        for(mabo::binary& binary : binaries)
+        struct object_range : ranges::view_facade<object_range>
         {
-            MABO_VARIANT_NS::visit(
-                overload(
-                    [&](mabo::object& object) { objects.push_back(object); },
-                    [&](mabo::archive& archive) { for(mabo::object object : archive.objects()) objects.push_back(std::move(object)); }
-                ),
-                binary
-            );
-        }
+            object_range() = default;
+            object_range(variant<object, archive> const* bin) : bin(bin)
+            {
+                if(mabo::holds_alternative<archive>(*bin))
+                {
+                    rng = mabo::get<archive>(*bin).objects();
+                    first = rng.begin();
+                    if(first == rng.end())
+                        bin = 0;
+                }
+            }
 
-        return objects;
+        private:
+            friend ranges::range_access;
+
+            bfd::object get() const
+            {
+                if(mabo::holds_alternative<object>(*bin))
+                {
+                    return mabo::get<object>(*bin);
+                }
+                else
+                {
+                    return *first;
+                }
+            }
+
+            bool done() const
+            {
+                return !bin;
+            }
+
+            void next()
+            {
+                if(holds_alternative<object>(*bin))
+                {
+                    bin = 0;
+                }
+                else
+                {
+                    ++first;
+                    if(first == rng.end())
+                    {
+                        bin = 0;
+                    }
+                }
+            }
+
+            variant<object, archive> const* bin;
+            decltype(std::declval<archive>().objects()) rng;
+            decltype(rng.begin()) first;
+        };
+
+        return ranges::view::bounded(object_range(this));
     }
 
 private:
-    binary load_file(bfd* abfd)
+    variant_type load_file(string_view str)
     {
+        bfd_initer_once init;
+        (void)init;
+
+        ::bfd* abfd = bfd_openr(str.to_string().c_str(), NULL);
+        if(!abfd)
+            throw std::runtime_error("failed to load binary " + str.to_string());
+
         if(bfd_check_format(abfd, bfd_archive))
         {
             return archive(abfd);
@@ -434,15 +578,11 @@ private:
         {
             return object(abfd);
         }
-        else
-        {
-            throw std::runtime_error("unsupported file type");
-        }
+
+        throw std::runtime_error("unsupported file type");
     }
-public:
-    vector<binary> binaries;
 };
 
-}
+} }
 
 #endif

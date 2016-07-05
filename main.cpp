@@ -1,4 +1,6 @@
-#include <mabo/bfd.hpp>
+#include <mabo/binary.hpp>
+#include <mabo/context.hpp>
+#include <iostream>
 
 int main(int argc, char* argv[])
 {
@@ -7,42 +9,45 @@ int main(int argc, char* argv[])
     {
         ctx.load_file(arg);
 
-        for(mabo::object obj : ctx.objects())
+        for(mabo::binary const& bin : ctx.binaries())
         {
-            mabo::optional<mabo::archive> archive = obj.archive();
-
-            if(archive)
-                std::cout << "object " << archive->name() << "(" << obj.name() << ")\n";
-            else
-                std::cout << "object " << obj.name() << "\n";
-
-            std::cout << "\nsymbols:\n";
-            for(mabo::symbol symbol : obj.symbols())
+            for(mabo::object const& obj : bin.objects())
             {
-                std::cout << symbol.name() << "\n";
-            }
 
-            std::cout << "\nimports:\n";
-            for(mabo::symbol symbol : obj.imports())
-            {
-                std::cout << symbol.name() << "\n";
-            }
+                mabo::optional<mabo::archive> archive = obj.archive();
 
-            std::cout << "\nlibs:\n";
-            for(mabo::string_view lib : obj.libs())
-            {
-                std::cout << lib << "\n";
-            }
+                if(archive)
+                    std::cout << "object " << archive->name() << "(" << obj.name() << ")\n";
+                else
+                    std::cout << "object " << obj.name() << "\n";
 
-            #if 0
-            std::cout << "\nsections:\n";
-            for(mabo::section section : obj.sections())
-            {
-                std::cout << section.name() << "\n";
-                std::cout << section.data() << "\n";
-            }
-            #endif
+                std::cout << "\nsymbols:\n";
+                for(mabo::symbol symbol : obj.symbols())
+                {
+                    std::cout << symbol.name() << "\n";
+                }
 
+                std::cout << "\nimports:\n";
+                for(mabo::symbol symbol : obj.imports())
+                {
+                    std::cout << symbol.name() << "\n";
+                }
+
+                std::cout << "\nlibs:\n";
+                for(mabo::string_view lib : obj.libs())
+                {
+                    std::cout << lib << "\n";
+                }
+
+                #if 0
+                std::cout << "\nsections:\n";
+                for(mabo::section section : obj.sections())
+                {
+                    std::cout << section.name() << "\n";
+                    std::cout << section.data() << "\n";
+                }
+                #endif
+            }
         }
     }
 
