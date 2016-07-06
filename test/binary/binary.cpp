@@ -128,7 +128,7 @@ TEST(binary, LibTestsShared)
         AllOf(Contains("f1"), Contains("f2"))
     );
 
-    EXPECT_THAT(obj.libs(), ElementsAre());
+    EXPECT_THAT(obj.libs(), Not(Contains("libtest1_shared.so")));
 }
 
 TEST(binary, TestExecutable)
@@ -151,12 +151,12 @@ TEST(binary, TestExecutable)
 
     EXPECT_THAT(
         obj.imports() | ranges::view::transform(&mabo::symbol::name),
-        ElementsAre()
+        AllOf(Contains("__libc_start_main"), Not(Contains("g1")))
     );
 
     EXPECT_THAT(
         obj.libs(),
-        ElementsAre("libc.so.6")
+        AllOf(Contains("libc.so.6"), Not(Contains("libtest1_shared.so")))
     );
 }
 
@@ -180,11 +180,11 @@ TEST(binary, TestExecutableShared)
 
     EXPECT_THAT(
         obj.imports() | ranges::view::transform(&mabo::symbol::name),
-        Contains("g1")
+        AllOf(Contains("__libc_start_main"), Contains("g1"))
     );
 
     EXPECT_THAT(
         obj.libs(),
-        ElementsAre("libtest1_shared.so", "libc.so.6")
+        AllOf(Contains("libtest1_shared.so"), Contains("libc.so.6"))
     );
 }

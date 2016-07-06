@@ -117,7 +117,7 @@ struct bfd_handle
     ::bfd* bfd()
     {
         if(value)
-                if(!member)
+                if(member == 0)
                     return (::bfd*)value;
                 else
                     return value->*member;
@@ -143,6 +143,16 @@ struct symbol
     string_view name() const
     {
         return sym->name;
+    }
+
+    size_t addr() const
+    {
+        return sym->section->vma + sym->value;
+    }
+
+    bool global() const
+    {
+        return sym->flags & BSF_GLOBAL;
     }
 
 private:
@@ -180,7 +190,7 @@ struct section
             struct cursor
             {
                 cursor() = default;
-                cursor(asection* sec, size_t sz, size_t idx) : sec(sec), sz(sz), idx(idx)
+                cursor(::asection* sec, size_t sz, size_t idx) : sec(sec), sz(sz), idx(idx)
                 {
                     advance(0, true);
                 }
@@ -255,55 +265,6 @@ struct object
     explicit object(::bfd* abfd) : abfd(abfd)
     {
         assert(abfd);
-
-        // partitioning criteria
-        auto is_import = [](asymbol* sym)
-        {
-            return bfd_is_und_section(sym->section);
-        };
-        auto is_global = [](asymbol* sym)
-        {
-            return sym->flags & BSF_GLOBAL;
-        };
-
-        // load normal symbols
-        long storage_needed = bfd_get_symtab_upper_bound(abfd);
-
-        if(storage_needed < 0)
-            throw std::runtime_error("bfd_get_symtab_upper_bound failed");
-
-        symbols_.resize(storage_needed / sizeof(asymbol*));
-
-        long number_of_symbols = bfd_canonicalize_symtab(abfd, &symbols_[0]);
-        if(number_of_symbols < 0)
-            throw std::runtime_error("bfd_canonicalize_symtab failed");
-
-        symbols_.resize(number_of_symbols);
-
-        symbols_part1 = ranges::partition(symbols_, is_import) - symbols_.begin();
-        symbols_part2 = ranges::partition(ranges::make_iterator_range(symbols_.begin() + symbols_part1, symbols_.end()), is_global).get_unsafe() - symbols_.begin();
-
-        // load dynamic symbols
-        storage_needed = bfd_get_dynamic_symtab_upper_bound(abfd);
-
-        // this fails for non-shared objects
-        if(storage_needed < 0)
-        {
-            dyn_symbols_part1 = 0;
-            dyn_symbols_part2 = 0;
-            return;
-        }
-
-        dyn_symbols_.resize(storage_needed / sizeof(asymbol*));
-
-        number_of_symbols = bfd_canonicalize_dynamic_symtab(abfd, &dyn_symbols_[0]);
-        if(number_of_symbols < 0)
-            throw std::runtime_error("bfd_canonicalize_dynamic_symtab failed");
-
-        dyn_symbols_.resize(number_of_symbols);
-
-        dyn_symbols_part1 = ranges::partition(dyn_symbols_, is_import) - dyn_symbols_.begin();
-        dyn_symbols_part2 = ranges::partition(ranges::make_iterator_range(dyn_symbols_.begin() + dyn_symbols_part1, dyn_symbols_.end()), is_global).get_unsafe() - dyn_symbols_.begin();
     }
 
     string_view name() const
@@ -357,18 +318,32 @@ struct object
 
     auto symbols() const
     {
-        return ranges::view::concat(
-            ranges::make_iterator_range(symbols_.begin() + symbols_part1, symbols_.begin() + symbols_part2) | ranges::view::transform([](asymbol* sym) { return symbol(sym); }),
-            ranges::make_iterator_range(dyn_symbols_.begin() + dyn_symbols_part1, dyn_symbols_.begin() + dyn_symbols_part2) | ranges::view::transform([](asymbol* sym) { return symbol(sym); })
-        );
+        if(symbols_.empty() && dyn_symbols_.empty())
+            const_cast<object*>(this)->load_symbols();
+
+        // pick one, prefer symtab over dynsym
+        return  (
+                    (symbols_part2 - symbols_part1)
+                    ?   ranges::make_iterator_range(symbols_.begin() + symbols_part1, symbols_.begin() + symbols_part2)
+                    :   ranges::make_iterator_range(dyn_symbols_.begin() + dyn_symbols_part1, dyn_symbols_.begin() + dyn_symbols_part2)
+                )
+                | ranges::view::transform([](asymbol* sym) { return symbol(sym); })
+    ;
     }
 
     auto imports() const
     {
-        return ranges::view::concat(
-            ranges::make_iterator_range(symbols_.begin(), symbols_.begin() + symbols_part1) | ranges::view::transform([](asymbol* sym) { return symbol(sym); }),
-            ranges::make_iterator_range(dyn_symbols_.begin(), dyn_symbols_.begin() + dyn_symbols_part1) | ranges::view::transform([](asymbol* sym) { return symbol(sym); })
-        );
+        if(symbols_.empty() && dyn_symbols_.empty())
+            const_cast<object*>(this)->load_symbols();
+
+        // pick one, prefer dynsym over symtab
+        return  (
+                    (dyn_symbols_part1)
+                    ?   ranges::make_iterator_range(dyn_symbols_.begin(), dyn_symbols_.begin() + dyn_symbols_part1)
+                    :   ranges::make_iterator_range(symbols_.begin(), symbols_.begin() + symbols_part1)
+                )
+                | ranges::view::transform([](asymbol* sym) { return symbol(sym); })
+        ;
     }
 
     auto libs() const
@@ -406,6 +381,58 @@ struct object
     }
 
 private:
+    void load_symbols()
+    {
+        // partitioning criteria
+        auto is_import = [](asymbol* sym)
+        {
+            return bfd_is_und_section(sym->section);
+        };
+        auto is_global = [](asymbol* sym)
+        {
+            return sym->flags & BSF_GLOBAL;
+        };
+
+        // load normal symbols
+        long storage_needed = bfd_get_symtab_upper_bound(abfd.get());
+
+        if(storage_needed < 0)
+            throw std::runtime_error("bfd_get_symtab_upper_bound failed");
+
+        symbols_.resize(storage_needed / sizeof(asymbol*));
+
+        long number_of_symbols = bfd_canonicalize_symtab(abfd.get(), &symbols_[0]);
+        if(number_of_symbols < 0)
+            throw std::runtime_error("bfd_canonicalize_symtab failed");
+
+        symbols_.resize(number_of_symbols);
+
+        symbols_part1 = ranges::partition(symbols_, is_import) - symbols_.begin();
+        symbols_part2 = ranges::partition(ranges::make_iterator_range(symbols_.begin() + symbols_part1, symbols_.end()), is_global).get_unsafe() - symbols_.begin();
+
+        // load dynamic symbols
+        storage_needed = bfd_get_dynamic_symtab_upper_bound(abfd.get());
+
+        // this fails for non-shared objects
+        if(storage_needed < 0)
+        {
+            dyn_symbols_part1 = 0;
+            dyn_symbols_part2 = 0;
+            return;
+        }
+
+        dyn_symbols_.resize(storage_needed / sizeof(asymbol*));
+
+        number_of_symbols = bfd_canonicalize_dynamic_symtab(abfd.get(), &dyn_symbols_[0]);
+        if(number_of_symbols < 0)
+            throw std::runtime_error("bfd_canonicalize_dynamic_symtab failed");
+
+        dyn_symbols_.resize(number_of_symbols);
+
+        dyn_symbols_part1 = ranges::partition(dyn_symbols_, is_import) - dyn_symbols_.begin();
+        dyn_symbols_part2 = ranges::partition(ranges::make_iterator_range(dyn_symbols_.begin() + dyn_symbols_part1, dyn_symbols_.end()), is_global).get_unsafe() - dyn_symbols_.begin();
+    }
+
     bfd_handle<::bfd> abfd;
     vector<::asymbol*> symbols_;
     size_t symbols_part1;

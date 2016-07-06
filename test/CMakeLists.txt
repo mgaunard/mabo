@@ -3,8 +3,9 @@ find_package(Threads REQUIRED)
 include(ExternalProject)
 ExternalProject_Add(gtest_gmock
                     GIT_REPOSITORY https://github.com/google/googletest.git
+                    UPDATE_DISCONNECTED 1
                     PATCH_COMMAND patch -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/gtest.patch
-                    CMAKE_ARGS -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+                    CMAKE_ARGS -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
                     INSTALL_COMMAND ""
                     )
 

@@ -13,7 +13,6 @@ int main(int argc, char* argv[])
         {
             for(mabo::object const& obj : bin.objects())
             {
-
                 mabo::optional<mabo::archive> archive = obj.archive();
 
                 if(archive)
@@ -24,7 +23,7 @@ int main(int argc, char* argv[])
                 std::cout << "\nsymbols:\n";
                 for(mabo::symbol symbol : obj.symbols())
                 {
-                    std::cout << symbol.name() << "\n";
+                    std::cout << symbol.name() << " " << symbol.addr() << "\n";
                 }
 
                 std::cout << "\nimports:\n";

@@ -4,7 +4,7 @@
 #include <mabo/config.hpp>
 
 #include <mabo/binary/bfd.hpp>
-//#include <mabo/binary/radare2.hpp>
+#include <mabo/binary/radare2.hpp>
 
 namespace mabo
 {
@@ -23,7 +23,6 @@ namespace mabo
 
         auto objects() const;
     };
-
 
     struct archive
     {
@@ -60,6 +59,8 @@ namespace mabo
     {
         symbol() = delete;
         string_view name() const;
+        size_t addr() const;
+        bool global() const;
 
         // remove?
         mabo::object object() const;
