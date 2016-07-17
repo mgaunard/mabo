@@ -44,6 +44,7 @@ namespace mabo
         auto symbols() const;
         auto imports() const;
         auto libs() const;
+        auto link_paths() const;
     };
 
     struct section

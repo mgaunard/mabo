@@ -350,7 +350,48 @@ struct object
     {
         // only ELF and Mach-O support this
         // we only care about ELF for now
-        vector<string> libs;
+        return elf_dynstr(DT_NEEDED);
+    }
+
+    auto link_paths() const
+    {
+        vector<string> paths;
+
+        // split on :
+        auto split_push =
+            [&](string_view elem)
+            {
+                ranges::for_each(
+                    ranges::view::split(elem, ':'),
+                    [&](auto&& str)
+                    {
+                        auto&& bstr = ranges::view::bounded(str);
+                        paths.emplace_back(bstr.begin(), bstr.end());
+                    }
+                );
+            };
+
+        // RPATH
+        ranges::for_each(elf_dynstr(DT_RPATH), split_push);
+
+        // LD_LIBRARY_PATH
+        if(getenv("LD_LIBRARY_PATH"))
+            split_push(string_view(getenv("LD_LIBRARY_PATH")));
+
+        // RUNPATH
+        ranges::for_each(elf_dynstr(DT_RUNPATH), split_push);
+
+        // system paths
+        // TODO properly
+        paths.emplace_back("/usr/lib");
+
+        return paths;
+    }
+
+private:
+    vector<string> elf_dynstr(int type) const
+    {
+        vector<string> strings;
 
         auto traverse = [&](auto t)
         {
@@ -360,13 +401,13 @@ struct object
             typedef decltype(t) T;
             for(T entry : section(".dynamic")->data<T>())
             {
-                if(entry.d_tag == DT_NEEDED)
+                if(entry.d_tag == type)
                 {
                     auto it = section(".dynstr")->data<char>().begin() + entry.d_un.d_val;
                     string s;
                     for(; *it; ++it)
                         s += *it;
-                    libs.push_back(s);
+                    strings.push_back(s);
                 }
             }
         };
@@ -376,11 +417,9 @@ struct object
         else
             traverse(Elf32_Dyn());
 
-        return libs;
-
+        return strings;
     }
 
-private:
     void load_symbols()
     {
         // partitioning criteria

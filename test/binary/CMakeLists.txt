@@ -19,8 +19,15 @@ add_dependencies(tests_shared files)
 add_library(test1_shared SHARED test1.cpp)
 add_dependencies(test1_shared files)
 
+add_library(test2_shared SHARED test2.cpp)
+add_dependencies(test2_shared files)
+set_property(TARGET test2_shared PROPERTY LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/2)
+
 add_executable(test_exe_shared main.cpp)
 target_link_libraries(test_exe_shared test1_shared)
+
+add_executable(test_exe_shared2 main.cpp main2.cpp)
+target_link_libraries(test_exe_shared2 test1_shared test2_shared)
 
 # actual test
 add_executable(binary binary.cpp)

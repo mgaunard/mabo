@@ -158,6 +158,14 @@ TEST(binary, TestExecutable)
         obj.libs(),
         AllOf(Contains("libc.so.6"), Not(Contains("libtest1_shared.so")))
     );
+
+    std::string current_path = get_executable_path();
+    std::string current_dir = ::dirname(&current_path[0]);
+
+    EXPECT_THAT(
+        obj.link_paths(),
+        AllOf(Not(Contains(current_dir)), Not(Contains(current_dir + "/2")))
+    );
 }
 
 TEST(binary, TestExecutableShared)
@@ -186,5 +194,50 @@ TEST(binary, TestExecutableShared)
     EXPECT_THAT(
         obj.libs(),
         AllOf(Contains("libtest1_shared.so"), Contains("libc.so.6"))
+    );
+
+    std::string current_path = get_executable_path();
+    std::string current_dir = ::dirname(&current_path[0]);
+
+    EXPECT_THAT(
+        obj.link_paths(),
+        AllOf(Contains(current_dir), Not(Contains(current_dir + "/2")))
+    );
+}
+
+TEST(binary, TestExecutableShared2)
+{
+    mabo::binary bin("test_exe_shared2");
+    EXPECT_THAT(bin.name(), Eq("test_exe_shared2"));
+    EXPECT_THAT(mabo::holds_alternative<mabo::object>(bin), Eq(true));
+
+    mabo::object& obj = mabo::get<mabo::object>(bin);
+
+    EXPECT_THAT(
+        bin.objects() | ranges::view::transform(&mabo::object::name),
+        ElementsAre(obj.name())
+    );
+
+    EXPECT_THAT(
+        obj.symbols() | ranges::view::transform(&mabo::symbol::name),
+        AllOf(Contains("main"), Contains("f1"), Contains("f2"))
+    );
+
+    EXPECT_THAT(
+        obj.imports() | ranges::view::transform(&mabo::symbol::name),
+        AllOf(Contains("__libc_start_main"), Contains("g1"), Contains("g2"))
+    );
+
+    EXPECT_THAT(
+        obj.libs(),
+        AllOf(Contains("libtest1_shared.so"), Contains("libtest2_shared.so"), Contains("libc.so.6"))
+    );
+
+    std::string current_path = get_executable_path();
+    std::string current_dir = ::dirname(&current_path[0]);
+
+    EXPECT_THAT(
+        obj.link_paths(),
+        AllOf(Contains(current_dir), Contains(current_dir + "/2"))
     );
 }

@@ -38,6 +38,12 @@ int main(int argc, char* argv[])
                     std::cout << lib << "\n";
                 }
 
+                std::cout << "\nlink paths:\n";
+                for(mabo::string_view lib : obj.link_paths())
+                {
+                    std::cout << lib << "\n";
+                }
+
                 #if 0
                 std::cout << "\nsections:\n";
                 for(mabo::section section : obj.sections())
