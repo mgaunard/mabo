@@ -62,6 +62,7 @@ namespace mabo
         string_view name() const;
         size_t addr() const;
         bool global() const;
+        bool weak() const;
 
         // remove?
         mabo::object object() const;

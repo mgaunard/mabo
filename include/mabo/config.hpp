@@ -34,6 +34,25 @@ using MABO_VARIANT_NS::visit;
 template<class T>
 using optional = std::experimental::optional<T>;
 
+
+template<class T>
+size_t hash_value(T const& t);
+
+namespace detail
+{
+
+struct hash_value
+{
+    template<class T>
+    size_t operator()(T const& t) const
+    {
+        using ::mabo::hash_value;
+        return hash_value(t);
+    }
+};
+
+}
+
 }
 
 #endif

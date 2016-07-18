@@ -29,7 +29,11 @@ target_link_libraries(test_exe_shared test1_shared)
 add_executable(test_exe_shared2 main.cpp main2.cpp)
 target_link_libraries(test_exe_shared2 test1_shared test2_shared)
 
-# actual test
+# actual 'binary' test
 add_executable(binary binary.cpp)
 target_link_libraries(binary mabo)
 add_test(binary binary)
+
+add_executable(context context.cpp)
+target_link_libraries(context mabo)
+add_test(context context)

@@ -152,7 +152,12 @@ struct symbol
 
     bool global() const
     {
-        return sym->flags & BSF_GLOBAL;
+        return !(sym->flags & BSF_LOCAL);
+    }
+
+    bool weak() const
+    {
+        return sym->flags & BSF_WEAK;
     }
 
 private:
@@ -382,11 +387,29 @@ struct object
         ranges::for_each(elf_dynstr(DT_RUNPATH), split_push);
 
         // system paths
-        // TODO properly
+        // TODO parse /etc/ld.so.conf instead
+        if(abfd->arch_info->bits_per_word == 64)
+        {
+            paths.emplace_back("/lib/x86_64-linux-gnu");
+            paths.emplace_back("/usr/lib/x86_64-linux-gnu");
+        }
+        else
+        {
+            paths.emplace_back("/lib/i386-linux-gnu");
+            paths.emplace_back("/usr/lib/i386-linux-gnu");
+            paths.emplace_back("/lib/i686-linux-gnu");
+            paths.emplace_back("/usr/lib/i686-linux-gnu");
+            paths.emplace_back("/lib32");
+            paths.emplace_back("/usr/lib32");
+        }
+        paths.emplace_back("/lib");
         paths.emplace_back("/usr/lib");
 
         return paths;
     }
+
+    bool operator==(object const& other) const;
+    bool operator<(object const& other) const;
 
 private:
     vector<string> elf_dynstr(int type) const
@@ -429,7 +452,7 @@ private:
         };
         auto is_global = [](asymbol* sym)
         {
-            return sym->flags & BSF_GLOBAL;
+            return !(sym->flags & BSF_LOCAL);
         };
 
         // load normal symbols
@@ -533,6 +556,22 @@ struct archive
         return ranges::view::bounded(object_range(abfd.get()));
     }
 
+    bool operator==(archive const& other) const
+    {
+        return name() == other.name() ;
+    }
+
+    bool operator<(archive const& other) const
+    {
+        return name() < other.name();
+
+    }
+
+    friend size_t hash_value(archive const& self)
+    {
+        return std::hash<string_view>()(self.name());
+    }
+
 private:
     bfd_handle<::bfd> abfd;
 };
@@ -550,11 +589,38 @@ inline optional<bfd::archive> object::archive() const
         return {};
 }
 
+bool object::operator==(object const& other) const
+{
+    return archive() == other.archive()
+        && name() == other.name() ;
+}
+
+bool object::operator<(object const& other) const
+{
+    if(archive() == other.archive())
+        return name() < other.name();
+    else
+        return archive() < other.archive();
+
+}
+
+size_t hash_value(object const& self)
+{
+    if(self.archive())
+        return std::hash<string>()(self.archive()->name().to_string() + "(" + self.name().to_string() + ")");
+    else
+        return std::hash<string_view>()(self.name());
+}
+
 struct binary : variant<object, archive>
 {
     typedef variant<object, archive> variant_type;
 
     binary(string_view file) : variant_type(load_file(file))
+    {
+    }
+
+    binary(variant_type const& variant) : variant_type(variant)
     {
     }
 
@@ -626,6 +692,22 @@ struct binary : variant<object, archive>
         return ranges::view::bounded(object_range(this));
     }
 
+    bool operator==(binary const& other) const
+    {
+        return name() == other.name() ;
+    }
+
+    bool operator<(binary const& other) const
+    {
+        return name() < other.name();
+
+    }
+
+    friend size_t hash_value(binary const& self)
+    {
+        return std::hash<string_view>()(self.name());
+    }
+
 private:
     variant_type load_file(string_view str)
     {
@@ -649,6 +731,15 @@ private:
     }
 };
 
-} }
+}
+
+}
+
+namespace std
+{
+    template<> struct hash<::mabo::bfd::object> : mabo::detail::hash_value {};
+    template<> struct hash<::mabo::bfd::archive> : mabo::detail::hash_value {};
+    template<> struct hash<::mabo::bfd::binary> : mabo::detail::hash_value {};
+}
 
 #endif
