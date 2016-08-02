@@ -11,8 +11,5 @@ add_library(mabo INTERFACE)
 target_include_directories(mabo INTERFACE include)
 target_link_libraries(mabo INTERFACE deps)
 
+add_subdirectory(bin)
 add_subdirectory(test)
-
-add_executable(mabo_main main.cpp)
-set_property(TARGET mabo_main PROPERTY OUTPUT_NAME mabo)
-target_link_libraries(mabo_main mabo)
