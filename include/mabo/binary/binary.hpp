@@ -4,7 +4,10 @@
 #include <mabo/config.hpp>
 
 #include <mabo/binary/bfd.hpp>
+
+#ifdef MABO_WITH_RADARE2
 #include <mabo/binary/radare2.hpp>
+#endif
 
 namespace mabo
 {
